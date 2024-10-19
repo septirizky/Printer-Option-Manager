@@ -1,0 +1,28 @@
+name: flutter_application
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  mysql1: 0.20.0
+  path_provider: ^2.0.11
+  cupertino_icons: ^1.0.8
+  bitsdojo_window: 0.1.6
+  provider: ^6.0.5
+  flutter_dotenv: ^5.0.2
+  window_manager: ^0.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
