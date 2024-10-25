@@ -16,7 +16,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _startOrderChecking() {
-    _timer = Timer.periodic(const Duration(seconds: 10), (Timer timer) {
+    _timer = Timer.periodic(const Duration(seconds: 5), (Timer timer) {
       _checkOrders();
     });
   }
@@ -42,7 +42,7 @@ class AppState extends ChangeNotifier {
       int lastProcessedOdId = await _getLastProcessedOdId(conn);
 
       var orderResults = await conn.query(
-        'SELECT * FROM order_detail WHERE od_id > ? ORDER BY od_id',
+        'SELECT * FROM order_history WHERE oh_id > ? AND oh_type = "Addition" ORDER BY oh_id',
         [lastProcessedOdId]
       );
 
@@ -50,141 +50,70 @@ class AppState extends ChangeNotifier {
         Set<int> processedOrderIds = {};
 
         for (var orderNewRow in orderResults) {
+          var oh_id = orderNewRow['oh_id'];
           var o_id = orderNewRow['o_id'];
+          var i_id = orderNewRow['i_id'];
+          var t_id = orderNewRow['t_id'];
+          var is_id = orderNewRow['is_id'];
+          var oh_table_area = orderNewRow['oh_table_area'];
+          var u_id = orderNewRow['u_id'];
+          var oh_qty = (orderNewRow['oh_qty'] as double).toStringAsFixed(3);
+          var oh_options = orderNewRow['oh_options'];
+          var oh_desc = orderNewRow['oh_desc'];
 
-          if (!processedOrderIds.contains(o_id)) {
-            var orderInfoResults = await conn.query(
-              'SELECT ta_id, t_id, is_id FROM `order` WHERE o_id = ?',
-              [o_id]
-            );
+          var userResults = await conn.query(
+            'SELECT u_name FROM user WHERE u_id = ?', 
+            [u_id],
+          );
+          var u_name = userResults.first['u_name'];
 
-            if (orderInfoResults.isNotEmpty) {
-              var ta_id = orderInfoResults.first['ta_id'];
-              var t_id = orderInfoResults.first['t_id'];
-              var is_id = orderInfoResults.first['is_id'];
+          var itemResults = await conn.query(
+            'SELECT i_name FROM item WHERE i_id = ?', 
+            [i_id],
+          );
+          var i_name = itemResults.first['i_name'];
 
-              var printerResults = await conn.query(
-                'SELECT COUNT(*) as count FROM order_printer_option WHERE o_id = ?',
-                [o_id]
-              );
+          var tableResults = await conn.query(
+            'SELECT t_name FROM tables WHERE t_id = ?', 
+            [t_id],
+          );
+          var t_name = tableResults.first['t_name'];
 
-              var countOrderDetail = await conn.query(
-                'SELECT COUNT(*) as count FROM order_detail WHERE o_id = ?',
-                [o_id]
-              );
+          var existingOrderResults = await conn.query(
+            'SELECT COUNT(*) as count FROM order_history WHERE o_id = ?',
+            [o_id],
+          );
 
-              int differenceCount = countOrderDetail.first['count'] - printerResults.first['count'];
+          bool isTambahan = false;
 
-              if (printerResults.first['count'] == 0) {
-                for (var orderNewRow in orderResults) {
-                  var od_id = orderNewRow['od_id'];
-                  var u_id = orderNewRow['u_id'];
-                  var i_id = orderNewRow['i_id'];
-                  var od_name = orderNewRow['od_name'];
-                  var od_quantity = (orderNewRow['od_quantity'] as double).toInt();
+          if (existingOrderResults.first['count'] > 0) {
+            isTambahan = true; 
+          }
 
-                  var orderDetailOptionResults = await conn.query(
-                    'SELECT * FROM order_detail_option WHERE od_id = ?',
-                    [od_id]
-                  );
-                  var op_id = orderDetailOptionResults.isNotEmpty ? orderDetailOptionResults.first['op_id'] : null;
-                  var op_name = 'No Option';
+          final config = await _readConfig();
 
-                  if (op_id != null) {
-                    var optionResults = await conn.query(
-                      'SELECT op_name FROM options WHERE op_id = ?',
-                      [op_id]
-                    );
-                    op_name = optionResults.isNotEmpty ? optionResults.first['op_name'] : 'No Option';
-                  }
+          String? matchingPrinter;
 
-                  var tableResults = await conn.query(
-                    'SELECT t_name FROM tables WHERE t_id = ?', 
-                    [t_id],
-                  );
-                  var t_name = tableResults.first['t_name'];
-
-                  var tableAreaResults = await conn.query(
-                    'SELECT ta_name FROM tables_area WHERE ta_id = ?', 
-                    [ta_id],
-                  );
-                  var ta_name = tableAreaResults.first['ta_name'];
-
-                  var userResults = await conn.query(
-                    'SELECT u_name FROM user WHERE u_id = ?', 
-                    [u_id],
-                  );
-                  var u_name = userResults.first['u_name'];
-
-                  bool isTambahan = false;
-                  await insertOrderOption(conn, o_id, i_id, od_id, ta_id, ta_name, is_id, t_id, t_name, u_id, u_name, op_id, op_name, od_name, od_quantity, isTambahan);
-                  await _updateLastProcessedOdId(conn, od_id);
-
-                  logService.logMessage('$u_name menginput $od_quantity order BARU $od_name $op_name di table $t_name $ta_name');
-                }
-              } 
-              else if (differenceCount > 0) {
-                var addOrders = await conn.query(
-                  '''
-                  SELECT * FROM (
-                    SELECT * FROM order_detail WHERE o_id = ? ORDER BY od_id DESC LIMIT ?
-                  ) AS subquery
-                  ORDER BY od_id ASC
-                  ''',
-                  [o_id, differenceCount]
-                );
-
-                for (var orderNewRow in addOrders) {
-                  var od_id = orderNewRow['od_id'];
-                  var u_id = orderNewRow['u_id'];
-                  var i_id = orderNewRow['i_id'];
-                  var od_name = orderNewRow['od_name'];
-                  var od_quantity = (orderNewRow['od_quantity'] as double).toInt();
-
-                  var orderDetailOptionResults = await conn.query(
-                    'SELECT * FROM order_detail_option WHERE od_id = ?',
-                    [od_id]
-                  );
-
-                  var op_id = orderDetailOptionResults.isNotEmpty ? orderDetailOptionResults.first['op_id'] : null;
-                  var op_name = 'No Option';
-
-                  if (op_id != null) {
-                    var optionResults = await conn.query(
-                      'SELECT op_name FROM options WHERE op_id = ?',
-                      [op_id]
-                    );
-                    op_name = optionResults.isNotEmpty ? optionResults.first['op_name'] : 'No Option';
-                  }
-
-                  var tableResults = await conn.query(
-                    'SELECT t_name FROM tables WHERE t_id = ?', 
-                    [t_id],
-                  );
-                  var t_name = tableResults.first['t_name'];
-
-                  var tableAreaResults = await conn.query(
-                    'SELECT ta_name FROM tables_area WHERE ta_id = ?', 
-                    [ta_id],
-                  );
-                  var ta_name = tableAreaResults.first['ta_name'];
-
-                  var userResults = await conn.query(
-                    'SELECT u_name FROM user WHERE u_id = ?', 
-                    [u_id],
-                  );
-                  var u_name = userResults.first['u_name'];
-
-                  bool isTambahan = true;
-                  await insertOrderOption(conn, o_id, i_id, od_id, ta_id, ta_name, is_id, t_id, t_name, u_id, u_name, op_id, op_name, od_name, od_quantity, isTambahan);
-                  await _updateLastProcessedOdId(conn, od_id);
-
-                  logService.logMessage('$u_name menginput $od_quantity order TAMBAHAN $od_name $op_name di table $t_name $ta_name');
-                }
-              }
-              processedOrderIds.add(o_id);
+          for (var printer in config.keys) {
+            if (config[printer].contains(oh_options)) {
+              matchingPrinter = printer;
+              break; 
             }
           }
+
+          if (matchingPrinter != null) {
+            await insertLogPrint(conn, o_id, i_name, t_name, is_id, oh_table_area, u_id, u_name, oh_qty, oh_options, oh_desc, matchingPrinter, isTambahan);
+      
+            logService.logMessage('op_name $oh_options sesuai dengan config untuk printer $matchingPrinter');
+          } else {
+            logService.logMessage('op_name $oh_options tidak ditemukan di config.json untuk printer manapun.');
+          }
+
+          await _updateLastProcessedOdId(conn, oh_id);
+
+          logService.logMessage('$u_name menginput $oh_qty order ${isTambahan ? 'TAMBAHAN' : 'BARU'} $i_name $oh_options di table $t_name $oh_table_area');
+
+          processedOrderIds.add(o_id);          
         }
       }
 
@@ -213,30 +142,21 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  Future<void> insertOrderOption(MySqlConnection conn, int o_id, int i_id, int od_id, int ta_id, String ta_name, int is_id, int t_id, String t_name, int u_id, String u_name, int? op_id, String op_name, String od_name, int od_quantity, bool isTambahan) async {
-    var currentTime = DateTime.now().toString().split('.')[0];
-
-    await conn.query(
-      'INSERT INTO order_printer_option (o_id, i_id, u_id, od_id, od_name, od_quantity, ta_id, is_id, t_id, op_id, op_name, opr_printed, opo_stamps) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "False", ?)',
-      [o_id, i_id, u_id, od_id, od_name, od_quantity, ta_id, is_id, t_id, op_id, op_name, currentTime]
-    );
-
-    await checkPrinterOption(conn, od_id, o_id, ta_id, ta_name, is_id, t_id, t_name, u_id, u_name, op_name, od_name, od_quantity, isTambahan);
-  }
-
-  Future<void> insertLogPrint(MySqlConnection conn, int od_id, int o_id, int ta_id, String ta_name, int is_id, int t_id, String t_name, int u_id, String u_name, String op_name, String od_name, int od_quantity, String matchingPrinter, bool isTambahan) async {
+  Future<void> insertLogPrint(MySqlConnection conn, int o_id, String i_name, String t_name, int is_id, String oh_table_area, int u_id, String u_name, String oh_qty, String oh_options, String? oh_desc, String? matchingPrinter, bool isTambahan) async {
     var currentTime = DateTime.now().toString().split('.')[0];
     String tambahanText = isTambahan ? "[TAMBAHAN]\n" : "";
+    String odDescText = (oh_desc != null && oh_desc.isNotEmpty) ? '- [C] $oh_desc' : '';
 
     String rtfMessageSource = '''{\\rtf1\\ansi\\ansicpg1252\\deff0\\deflang1033{\\fonttbl{\\f0\\fnil FontB28;}{\\f1\\fnil FontA12;}{\\f2\\fnil Tahoma;}}
-\\viewkind4\\uc1\\pard\\f0\\fs44 Table $t_name / $ta_name \\par
+\\viewkind4\\uc1\\pard\\f0\\fs44 Table $t_name / $oh_table_area \\par
 \\f1\\fs28 $tambahanText\\par
 \\par
 
 $matchingPrinter\\tab $currentTime\\par
 ================================\\par
-[ ] $od_name x $od_quantity\\par
-    - $op_name\\par
+[ ] $i_name x $oh_qty\\par
+    - $oh_options\\par
+    $odDescText\\par
 \\par
 POS / $u_name\\par
 \\f2\\fs16\\par
@@ -247,46 +167,17 @@ POS / $u_name\\par
       INSERT INTO log_print (o_id, ta_id, is_id, t_id, u_id, br_id, ts_id, lp_print_type, lp_title, 
       lp_message, lp_message_source, lp_printer_name, lp_print_counter, lp_count, lp_time, lp_ip, 
       pos_id, lp_printed, lp_rpm_printed, lp_loaded, lp_redirected, lp_delayed_print, lp_rpm_session) 
-      VALUES (?, ?, ?, ?, ?, 0, 0, 'Order', ?, ?, ?, ?, 0, 1, ?, '192.168.110.23', 'POS', 
+      VALUES (?, 0, ?, 0, ?, 0, 0, 'Order', ?, ?, ?, ?, 0, 1, ?, '192.168.110.23', 'SV1', 
       "False", "False", "False", "False", "True", 'a5347f67')
       ''',
       [
-        o_id, ta_id, is_id, t_id, u_id, 'Table $t_id / $matchingPrinter', 
-        'Table $t_name / $ta_name\n\n$tambahanText\n$matchingPrinter\t$currentTime\n=====================\n[ ] $od_name x $od_quantity\n - $op_name\nPOS / $u_name\n',
+        o_id, is_id, u_id, 'Table $t_name / $matchingPrinter', 
+        'Table $t_name / $oh_table_area\n\n$tambahanText\n$matchingPrinter\t$currentTime\n=====================\n[ ] $i_name x $oh_qty\n - $oh_options\n $odDescText\n POS / $u_name\n',
         rtfMessageSource, matchingPrinter, currentTime,
       ],
     );
-  logService.logMessage('$u_name menginput $od_quantity $od_name dengan opsi $op_name ke printer: $matchingPrinter pada $currentTime');
-  _addLog('$u_name menginput $od_quantity $od_name dengan opsi $op_name ke printer: $matchingPrinter pada $currentTime');
-  }
-
-  Future<void> checkPrinterOption(MySqlConnection conn, int od_id, int o_id, int ta_id, String ta_name, int is_id, int t_id, String t_name, int u_id, String u_name, String op_name, String od_name, int od_quantity, bool isTambahan) async {
-    try {
-      final config = await _readConfig();
-
-      String? matchingPrinter;
-
-      for (var printer in config.keys) {
-        if (config[printer].contains(op_name)) {
-          matchingPrinter = printer;
-          break; 
-        }
-      }
-
-      if (matchingPrinter != null) {
-        await insertLogPrint(conn, od_id, o_id, ta_id, ta_name, is_id, t_id, t_name, u_id, u_name, op_name, od_name, od_quantity, matchingPrinter, isTambahan);
-  
-        await conn.query(
-          'UPDATE order_printer_option SET opr_printed = "True" WHERE od_id = ? AND op_name = ?',
-          [od_id, op_name]
-        );
-        logService.logMessage('op_name $op_name sesuai dengan config untuk printer $matchingPrinter');
-      } else {
-        logService.logMessage('op_name $op_name tidak ditemukan di config.json untuk printer manapun.');
-      }
-    } catch (e) {
-      logService.logMessage('Error during checking printer option: $e');
-    }
+  logService.logMessage('$u_name menginput $oh_qty $i_name dengan opsi $oh_options ke printer: $matchingPrinter pada $currentTime');
+  _addLog('$u_name menginput $oh_qty $i_name dengan opsi $oh_options ke printer: $matchingPrinter pada $currentTime');
   }
 
   Future<Map<String, dynamic>> _readConfig() async {
